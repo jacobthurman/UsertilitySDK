@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+  <PersonalityInfo>
+    <Option>
+      <Option Name="Personality">Default.Personality</Option>
+      <Option Name="ProjectType"></Option>
+      <Option Name="Version">1.0</Option>
+      <Option Name="GUID">{D4FEBDB8-E8CC-4483-A93F-00BFD361ED0A}</Option>
+    </Option>
+  </PersonalityInfo>
+  <Default.Personality>
+    
+    <Projects>
+      <Projects Name="Usertility90.bpl">Usertility90.bdsproj</Projects>
+      <Projects Name="UsertilityDesign90.bpl">UsertilityDesign90.bdsproj</Projects>
+      <Projects Name="Targets">Usertility90.bpl UsertilityDesign90.bpl</Projects>
+    </Projects>
+    <Dependencies/>
+  </Default.Personality>
+</BorlandProject>

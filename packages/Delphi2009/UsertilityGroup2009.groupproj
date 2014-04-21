@@ -1,0 +1,50 @@
+﻿	<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+		<PropertyGroup>
+			<ProjectGuid>{342c53b7-a1aa-42d1-a883-3a3c6419d3d0}</ProjectGuid>
+		</PropertyGroup>
+		<ItemGroup>
+			<Projects Include="Usertility120.dproj">
+				<Dependencies/>
+			</Projects>
+			<Projects Include="UsertilityDesign120.dproj">
+				<Dependencies/>
+			</Projects>
+		</ItemGroup>
+		<ProjectExtensions>
+			<Borland.Personality>Default.Personality.12</Borland.Personality>
+			<Borland.ProjectType/>
+			<BorlandProject>
+				<BorlandProject>
+					<Default.Personality/>
+				</BorlandProject>
+			</BorlandProject>
+		</ProjectExtensions>
+		<Target Name="Usertility120">
+			<MSBuild Projects="Usertility120.dproj"/>
+		</Target>
+		<Target Name="Usertility120:Clean">
+			<MSBuild Targets="Clean" Projects="Usertility120.dproj"/>
+		</Target>
+		<Target Name="Usertility120:Make">
+			<MSBuild Targets="Make" Projects="Usertility120.dproj"/>
+		</Target>
+		<Target Name="UsertilityDesign120">
+			<MSBuild Projects="UsertilityDesign120.dproj"/>
+		</Target>
+		<Target Name="UsertilityDesign120:Clean">
+			<MSBuild Targets="Clean" Projects="UsertilityDesign120.dproj"/>
+		</Target>
+		<Target Name="UsertilityDesign120:Make">
+			<MSBuild Targets="Make" Projects="UsertilityDesign120.dproj"/>
+		</Target>
+		<Target Name="Build">
+			<CallTarget Targets="Usertility120;UsertilityDesign120"/>
+		</Target>
+		<Target Name="Clean">
+			<CallTarget Targets="Usertility120:Clean;UsertilityDesign120:Clean"/>
+		</Target>
+		<Target Name="Make">
+			<CallTarget Targets="Usertility120:Make;UsertilityDesign120:Make"/>
+		</Target>
+		<Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+	</Project>
