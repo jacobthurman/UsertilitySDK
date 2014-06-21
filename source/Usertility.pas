@@ -1,11 +1,22 @@
 unit Usertility;
 
-{$DEFINE VCL}
+{$IF CompilerVersion >= 24}
+{$LEGACYIFEND ON}
+{$IFEND}
 
 interface
 
-uses Types, Classes, Windows, Messages, SysUtils, Math,
-Controls, Forms, ExtCtrls;
+uses Types, Classes,
+{$IF DEFINED(MSWINDOWS)}
+Windows, Messages, ExtCtrls, Controls, Forms,
+{$ELSEIF DEFINED(MACOS) AND NOT DEFINED(IOS)}
+Macapi.Foundation, Macapi.AppKit, Macapi.Helpers, Macapi.ObjectiveC,
+MacApi.ObjCRuntime, ExtCtrls, Controls, Forms,
+{$ELSEIF DEFINED(IOS)}
+iOSApi.Foundation, FMX.Types, FMX.Controls, FMX.Forms, FMX.Dialogs,
+MacApi.ObjCRuntime, Macapi.Helpers, Macapi.ObjectiveC, iOSApi.UIKit,
+{$IFEND}
+SysUtils, Math;
 
 const
 
@@ -31,13 +42,18 @@ TAnalyticsOptions = set of TAnalyticsOption;
 
 TAnalyticsPrivacyMessageEvent = procedure(Sender: TObject; var Activate: Boolean) of Object;
 
-TUsertility = class(TComponent)
-private
+TUsertilityBase = class(TComponent)
+protected
   FOptions: TAnalyticsOptions;
   FApplicationID: string;
   FPrivacyMessage: TStrings;
   FOnPrivacyMessage: TAnalyticsPrivacyMessageEvent;
+  {$IF DEFINED(MSWINDOWS)}
   FCBTHookHandle: THandle;
+  {$ELSEIF DEFINED(MACOS)}
+  ObjCObserverClass: Pointer;
+  ObjCObserver: Pointer;
+  {$IFEND}
   FActive: Boolean;
   FDataCache: TStringList;
   FUpdateTimer: TTimer;
@@ -45,7 +61,7 @@ private
   FUserID: string; //ANONYMOUS ID used to track this user through a session
   FSessionID: string;
   FEventCount: Cardinal;
-  FActiveForm: TForm;
+  FActiveForm: TObject; //Might be a VCL form or an FMX form
   FFocusedControl: TControl;
 
   FOldExceptionHandler: TExceptionEvent;
@@ -66,14 +82,15 @@ private
 
   procedure TrackApplicationStarted;
   procedure TrackApplicationExit;
-  procedure TrackWindowActivated(AHandle: THandle);
-  procedure TrackControlFocused(AHandle: THandle);
+  procedure TrackWindowActivated(AHandle: THandle); virtual;
+  procedure TrackControlFocused(AHandle: THandle); virtual;
   procedure SetCacheSize(const Value: Integer);
   procedure SetOptions(const Value: TAnalyticsOptions);
-    procedure SetPrivacyMessage(const Value: TStrings);
-    procedure SetOnPrivacyMessage(const Value: TAnalyticsPrivacyMessageEvent);
-protected
+  procedure SetPrivacyMessage(const Value: TStrings);
+  procedure SetOnPrivacyMessage(const Value: TAnalyticsPrivacyMessageEvent);
   procedure Loaded; override;
+  function GetUserID: string;
+  function GetAllowTracking: Boolean;
 public
   constructor Create(AOwner: TComponent); override;
   destructor Destroy; override;
@@ -82,6 +99,7 @@ public
   function GetTimestamp: string;
   function StartSending: THandle;
   function CheckPrivacy: Boolean;
+  procedure OSXWindowDidBecomeKey(P: Pointer);
 published
   property OnPrivacyMessage: TAnalyticsPrivacyMessageEvent read
     FOnPrivacyMessage write SetOnPrivacyMessage;
@@ -92,7 +110,8 @@ published
   property CacheSize: Integer read FMaxCacheSize write SetCacheSize;
   property Options: TAnalyticsOptions read FOptions write SetOptions;
   property PrivacyMessage: TStrings read FPrivacyMessage write
-  SetPrivacyMessage;
+    SetPrivacyMessage;
+  property UserID: string read GetUserID;
 end;
 
 //Various error classes
@@ -110,32 +129,38 @@ public
   procedure Execute; override;
 end;
 
-function GetUsertility: TUsertility;
+function GetUsertility: TUsertilityBase;
 
 implementation
 
-uses Dialogs, Registry, SyncObjs,
-{$IF DEFINED(USERTILITY_USEINDY)}
-IdHTTP,
-{$ELSEIF DEFINED(MSWINDOWS)}
-WinINet
+uses SyncObjs, DateUtils
+{$IF DEFINED(MSWINDOWS)}
+, Registry
+, WinINet
+, Dialogs
+{$ELSEIF DEFINED(MACOS) AND NOT DEFINED(IOS)}
+, FMX.Platform.Mac
+, Dialogs
+{$ELSEIF DEFINED(IOS)}
+, FMX.Platform.iOS
 {$IFEND};
 
 var
-  GlobalAnalytics: TUsertility = nil;
+  GlobalAnalytics: TUsertilityBase = nil;
   AnalyticsCriticalSection: TCriticalSection;
-function GetUsertility: TUsertility;
+function GetUsertility: TUsertilityBase;
 begin
   Result := GlobalAnalytics;
 end;
 
 //Non-OO Hook callbacks
+{$IFDEF MSWINDOWS}
 function CBTHookProc(nCode: Integer; WPARAM: WPARAM; LPARAM: LPARAM): LRESULT;
   stdcall;
-var
-  MouseStruct: PMouseHookStruct;
-  TargetHandle: THandle;
-  TargetControl: TControl;
+//var
+  //MouseStruct: PMouseHookStruct; //Reserved for later
+  //TargetHandle: THandle; //Reserved for later
+  //TargetControl: TControl; //Reserved for later
 begin
   case nCode of
   HCBT_ACTIVATE:
@@ -166,13 +191,41 @@ begin
   end;
   Result := CallNextHookEx(GlobalAnalytics.FCBTHookHandle, nCode, WPARAM, LPARAM);
 end;
+{$ENDIF}
+
+{$IF DEFINED(MACOS)}
+procedure ObjCWindowDidBecomeKey(Self: Pointer; Cmd: SEL; Extra: Pointer); cdecl;
+var
+  Notification: NSNotification;
+  Window: {$IF DEFINED(IOS)}UIWindow{$ELSE}NSWindow{$IFEND};
+  Handle: THandle;
+  S: string;
+begin
+  Notification := TNSNotification.Wrap(Extra);
+  S := NSStrToStr(Notification.name);
+//  if S = 'UIWindowDidBecomeKeyNotification' then
+//  begin
+    Window :=
+      {$IF DEFINED(IOS)}
+      TUIWindow.Wrap(objc_msgSend(Extra, sel_getUid('object')));
+      {$ELSE}
+      TNSWindow.Wrap(objc_msgSend(Extra, sel_getUid('object')));
+      {$IFEND}
+    Handle := THandle(Window);
+    GlobalAnalytics.TrackWindowActivated(Handle);
+//  end;
+end;
+{$IFEND}
 
 //Misc. Support Routines
 function GetCPUName: string;
+{$IFDEF MSWINDOWS}
 var
   Reg: TRegistry;
+{$ENDIF}
 begin
   Result := '';
+  {$IFDEF MSWINDOWS}
   Reg := TRegistry.Create(KEY_READ);
   try
     Reg.RootKey := HKEY_LOCAL_MACHINE;
@@ -183,12 +236,16 @@ begin
   finally
     Reg.Free;
   end;
+  {$ENDIF}
 end;
 
 function GetCpuSpeed: string;
+{$IFDEF MSWINDOWS}
 var
   Reg: TRegistry;
+{$ENDIF}
 begin
+  {$IFDEF MSWINDOWS}
   Reg := TRegistry.Create;
   try
     Reg.RootKey := HKEY_LOCAL_MACHINE;
@@ -200,14 +257,18 @@ begin
   finally
     Reg.Free;
   end;
+  {$ENDIF}
 end;
 
 procedure GetBuildInfo(var V1, V2, V3, V4: word);
+{$IFDEF MSWINDOWS}
 var
-  VerInfoSize, VerValueSize, Dummy: DWORD;
+  VerInfoSize, VerValueSize, Dummy: Cardinal;
   VerInfo: Pointer;
   VerValue: PVSFixedFileInfo;
+  {$ENDIF}
 begin
+  {$IFDEF MSWINDOWS}
   VerInfoSize := GetFileVersionInfoSize(PChar(ParamStr(0)), Dummy);
   if VerInfoSize > 0 then
   begin
@@ -228,6 +289,7 @@ begin
         FreeMem(VerInfo, VerInfoSize);
       end;
   end;
+  {$ENDIF}
 end;
 
 function GetBuildInfoAsString: string;
@@ -241,12 +303,18 @@ end;
 
 { TApplicationAnalytics }
 
-function TUsertility.CheckPrivacy: Boolean;
+function TUsertilityBase.CheckPrivacy: Boolean;
 var
   AllowTracking: Boolean;
+  {$IFDEF MSWINDOWS}
   Reg: TRegistry;
+  {$ENDIF}
+  {$IF DEFINED(MACOS)}
+  Settings: NSUserDefaults;
+  {$IFEND}
 begin
   AllowTracking := True;
+
   if Assigned(FOnPrivacyMessage) then
   begin
     FOnPrivacyMessage(Self, AllowTracking);
@@ -259,7 +327,7 @@ begin
   begin
     ShowMessage(PrivacyMessage.Text);
   end;
-
+  {$IF DEFINED(MSWINDOWS)}
   //Do the registry thing
   Reg := TRegistry.Create(KEY_READ);
   try
@@ -271,12 +339,25 @@ begin
     Reg.CloseKey;
     Reg.Free;
   end;
+  {$ELSEIF DEFINED(MACOS)}
+  Settings := TNSUserDefaults.Wrap(
+         TNSUserDefaults.OCClass.standardUserDefaults);
+  Settings.setBool(AllowTracking, StrToNSStr('UsertilityA'));
+  {$ELSE}
+  AllowTracking := False;
+  {$IFEND}
 
   Result := AllowTracking;
 
 end;
 
-constructor TUsertility.Create(AOwner: TComponent);
+{$IF DEFINED(MACOS)}
+function class_createInstance(cls: Pointer; extraBytes: LongWord): pointer;
+  cdecl; external libobjc name _PU + 'class_createInstance';
+{$IFEND}
+
+
+constructor TUsertilityBase.Create(AOwner: TComponent);
 var
   GUID: TGUID;
 begin
@@ -305,11 +386,25 @@ begin
 
   FPrivacyMessage := TStringList.Create;
   FPrivacyMessage.Text := sPrivacyMessage;
+
+  FUserID := '';
+
+  {$IF DEFINED(MACOS)}
+  ObjCObserverClass := objc_allocateClassPair(objc_getClass('NSObject'), 'UsertilityObserver', 0);
+  class_addMethod(ObjCObserverClass, sel_getUid('OSXWindowDidBecomeKey:'),
+    @ObjCWindowDidBecomeKey, 'v@:@');
+  objc_registerClassPair(ObjCObserverClass);
+  ObjCObserver := class_createInstance(ObjCObserverClass, 0);
+  //OBJCObserver := objc_msgSend(objc_msgSend(ObjCObserverClass, sel_getUid(
+  //   'alloc')), sel_getUid('init'));
+  //objc_msgSend(ObjCObserver, sel_getUid('OSXWindowDidBecomeKey:'));
+  {$IFEND}
+
 end;
 
 
 
-destructor TUsertility.Destroy;
+destructor TUsertilityBase.Destroy;
 begin
   //Send any remaining data, if possible
   Active := False;
@@ -321,41 +416,173 @@ begin
   inherited;
 end;
 
-function TUsertility.GetTimestamp: string;
+function TUsertilityBase.GetAllowTracking: Boolean;
 var
-  UTC: TSystemTime;
+  {$IF DEFINED(MSWINDOWS)}
+  Reg: TRegistry;
+  {$ELSEIF DEFINED(MACOS)}
+  Settings: NSUserDefaults;
+  KeyString: NSString;
+  {$IFEND}
 begin
+  try
+    {$IF DEFINED(MSWINDOWS)}
+    Reg := TRegistry.Create(KEY_READ);
+    try
+      Reg.RootKey := HKEY_CURRENT_USER;
+      Reg.OpenKey('Software\TwoDesk\Analytics\' + ApplicationID, True);
+      if Reg.ValueExists('A') then
+      begin
+        Result := Reg.ReadBool('A');
+      end else
+      begin
+        Result := CheckPrivacy;
+      end;
+    finally
+      Reg.CloseKey;
+      Reg.Free;
+    end;
+    {$ELSEIF DEFINED(MACOS)}
+    Settings := TNSUserDefaults.Wrap(
+       TNSUserDefaults.OCClass.standardUserDefaults);
+    //Settings.setObject((UserIDNS as ILocalObject).getObjectID, StrToNSStr(
+    //   'UsertilityU'));
+    KeyString := StrToNSStr('UsertilityA');
+    if Settings.dictionaryRepresentation.allKeys.containsObject((KeyString as ILocalObject).GetObjectID) then
+    begin
+      Result := Settings.boolForKey(StrToNSStr('UsertilityA'));
+    end else
+    begin
+      Result := CheckPrivacy;
+    end;
+    {$IFEND}
+  except
+    Result := False;
+  end;
+end;
+
+function TUsertilityBase.GetTimestamp: string;
+var
+{$IF DEFINED(MSWINDOWS)}
+  UTC: TSystemTime;
+{$ELSEIF DEFINED(MACOS)}
+  UTC: TDateTime;
+  Year, Month, Day, Hour, Min, Sec, Milli: Word;
+{$IFEND}
+begin
+  {$IF DEFINED(MSWINDOWS)}
   GetSystemTime(UTC);
   Result := Format('%d-%d-%d %d:%d:%d.%d',
     [UTC.wYear, UTC.wMonth, UTC.wDay,
     UTC.wHour, UTC.wMinute, UTC.wSecond, UTC.wMilliseconds]);
+  {$ELSE}
+  UTC := TTimeZone.Local.ToUniversalTime(Now);
+  DecodeDate(UTC, Year, Month, Day);
+  DecodeTime(UTC, Hour, Min, Sec, Milli);
+  Result := Format('%d-%d-%d %d:%d:%d.%d',
+    [Year, Month, Day, Hour, Min, Sec, Milli]);
+  {$IFEND}
 end;
 
-function TUsertility.GetUpdateInterval: Integer;
+function TUsertilityBase.GetUpdateInterval: Integer;
 begin
   Result := FUpdateTimer.Interval div 1000;
 end;
 
-procedure TUsertility.InstallExceptionHandler;
+function TUsertilityBase.GetUserID: string;
+var
+  {$IF DEFINED(MSWINDOWS)}
+  Reg: TRegistry;
+  {$ELSEIF DEFINED(MACOS)}
+  Settings: NSUserDefaults;
+  UserIDNS: NSString;
+  {$IFEND}
+  GUID: TGUID;
+begin
+  Result := '';
+  if FUserID = '' then
+  begin
+    {$IF DEFINED(MSWINDOWS)}
+    Reg := TRegistry.Create(KEY_READ);
+    try
+      Reg.RootKey := HKEY_CURRENT_USER;
+      Reg.OpenKey('Software\TwoDesk\Analytics\' + ApplicationID, True);
+      if Reg.ValueExists('U') then
+      begin
+        FUserID := Reg.ReadString('U');
+      end else
+      begin
+        Reg.CloseKey;
+        Reg.Access := KEY_WRITE;
+        Reg.OpenKey('Software\TwoDesk\Analytics\' + ApplicationID, True);
+        CreateGUID(GUID);
+        FUserID := GuidToString(GUID);
+        Reg.WriteString('U', FUserID);
+      end;
+    finally
+      Reg.CloseKey;
+      Reg.Free;
+    end;
+    {$ELSEIF DEFINED(MACOS)}
+    CreateGUID(GUID);
+    FUserID := GuidToString(GUID);
+    Settings := TNSUserDefaults.Wrap(
+       TNSUserDefaults.OCClass.standardUserDefaults);
+    UserIDNS := StrToNSStr(FUserID);
+    Settings.setObject((UserIDNS as ILocalObject).getObjectID, StrToNSStr(
+       'UsertilityU'));
+    {$IFEND}
+  end;
+  Result := FUserID;
+end;
+
+procedure TUsertilityBase.InstallExceptionHandler;
 begin
   FOldExceptionHandler := Application.OnException;
   Application.OnException := TrackException;
 end;
 
-procedure TUsertility.InstallHooks;
+procedure TUsertilityBase.InstallHooks;
+{$IF DEFINED(MACOS)}
+var
+  NotificationCenter: NSNotificationCenter;
+  //NotificationStr: NSString;
+  //Str: AnsiString;
+  Selector: SEL;
+  StrNS: NSString;
+{$IFEND}
 begin
-  FCBTHookHandle := SetWindowsHookEx(WH_CBT, @CBTHookProc, 0, GetCurrentThreadID);
+  {$IF DEFINED(MSWINDOWS)}
+  FCBTHookHandle := SetWindowsHookEx(WH_CBT, CBTHookProc, 0, GetCurrentThreadID);
   if FCBTHookHandle = 0 then
   begin
     raise EAnalyticsInitializationFailed.Create(Format('CBT hook could not be ' +
               'installed. Error code: %d', [GetLastError]));
   end;
+  {$ELSEIF DEFINED(MACOS)}
+  NotificationCenter := nil;
+  NotificationCenter := TNSNotificationCenter.Wrap(
+    TNSNotificationCenter.OCClass.defaultCenter
+  );
+  //NotificationStr := StrToNSStr('NSWindowDidBecomeKeyNotification');
+  {$IF DEFINED(IOS)}
+  StrNS := StrToNSStr('UIWindowDidBecomeKeyNotification');
+  {$ELSE}
+  StrNS := StrToNSStr('NSWindowDidBecomeKeyNotification');
+  {$IFEND}
+  Selector := sel_getUid('OSXWindowDidBecomeKey:');
+  NotificationCenter.addObserver(ObjCObserver,
+    Selector,
+    (StrNS as ILocalObject).GetObjectID,
+    nil
+    );
+  {$IFEND}
 
   if aoTrackExceptions in Options then
     InstallExceptionHandler;
 end;
 
-procedure TUsertility.Loaded;
+procedure TUsertilityBase.Loaded;
 begin
   inherited;
   //This is here to make sure that the Active property setter gets fully
@@ -367,11 +594,11 @@ begin
   end;
 end;
 
-procedure TUsertility.Log(AMessage: string);
+procedure TUsertilityBase.Log(AMessage: string);
 begin
-  {$IFDEF DEBUG}
+  {$IF DEFINED(DEBUG) AND DEFINED(MSWINDOWS)}
   OutputDebugString(PChar('TwoDesk Software Analytics: ' + AMessage));
-  {$ENDIF}
+  {$IFEND}
   AnalyticsCriticalSection.Enter;
   try
     FDataCache.Add(IntToStr(FEventCount) + '|' + AMessage);
@@ -383,30 +610,41 @@ begin
     StartSending;
 end;
 
-procedure TUsertility.RemoveExceptionHandler;
+procedure TUsertilityBase.OSXWindowDidBecomeKey(P: Pointer);
+begin
+
+end;
+
+procedure TUsertilityBase.RemoveExceptionHandler;
 begin
   Application.OnException := FOldExceptionHandler;
 end;
 
-procedure TUsertility.RemoveHooks;
+procedure TUsertilityBase.RemoveHooks;
 begin
   if aoTrackExceptions in Options then
     RemoveExceptionHandler;
+  {$IF DEFINED(MSWINDOWS)}
   UnhookWindowsHookEx(FCBTHookHandle);
+  {$ELSEIF DEFINED(MACOS)}
+  TNSNotificationCenter.Wrap(
+    TNSNotificationCenter.OCClass.defaultCenter).removeObserver(
+      Self);
+  {$IFEND}
 end;
 
 //This method should generally be called from the analytics thread, but
 //it can be called from main UI thread if needed.
 //Note that it will BLOCK on network access, so running it in the main
 //Thread is discouraged
-procedure TUsertility.SendData;
+procedure TUsertilityBase.SendData;
+{$IFDEF USERTILITY_USEINDY}
 var
-  {$IFDEF USERTILITY_USEINDY}
   http: TIdHttp;
-  {$ENDIF}
   DataCount, I: Integer;
   ParamList: TStrings;
   HttpResult: string;
+  {$ENDIF}
 begin
   {$IFDEF USERTILITY_USEINDY}
   ParamList := TStringList.Create;
@@ -418,7 +656,7 @@ begin
       if DataCount = 0 then
         Exit;
       ParamList.Add(Format('I=%s', [ApplicationID]));
-      ParamList.Add(Format('U=%s', [FUserID]));
+      ParamList.Add(Format('U=%s', [UserID]));
       ParamList.Add(Format('S=%s', [FSessionID]));
       ParamList.Add(Format('N=%d', [DataCount]));
       for I := 0 to DataCount - 1 do
@@ -449,26 +687,55 @@ begin
   SendDataNoIndy;
 end;
 
-procedure TUsertility.SendDataNoIndy;
+procedure TUsertilityBase.SendDataNoIndy;
 var
+  {$IF DEFINED(MSWINDOWS)}
   HSession, HConnect, HRequest: HINTERNET;
+  {$ELSEIF DEFINED(MACOS)}
+  URL: NSUrl;
+  URLRequest: NSMutableURLRequest;
+  URLConnection: NSURLConnection;
+  URLResponse: Pointer;
+  PostData: NSData;
+  Err: Pointer;
+  ErrObj: NSError;
+  {$IFEND}
   ParamList: TStrings;
   Content, EncodedData: string;
   Header: String;
+  {$IF DEFINED(IOS)}
+  ContentBytes: TBytes;
+  {$ELSE}
   ANSIContent: ANSIString;
+  {$IFEND}
   DataCount, I: Integer;
 
 function URLEncode(S: string):string;
 var
-  J: Integer;
+  J, ValStart, ValEnd: Integer;
   StartIndex: Integer;
 begin
   StartIndex := Pos('=', S);
+  {$IF DEFINED(IOS)}
+  Result := Copy(S, 0, StartIndex);//0-indexed strings on mobile
+  ValStart := StartIndex;
+  ValEnd := Length(S) - 1;
+  {$ELSE}
   Result := Copy(S, 1, StartIndex);
-  for J := StartIndex + 1 to Length(S) do
+  ValStart := StartIndex + 1;
+  ValEnd := Length(S);
+  {$IFEND}
+  for J := ValStart to ValEnd do
+    {$IFDEF UNICODE}
+    if not CharInSet(S[J], ['A'..'Z','a'..'z','0','1'..'9','-','_','~','.']) then
+      Result := Result + '%' + IntToHex(ord(S[J]), 2)
+    else Result := Result + S[J];
+    {$ELSE}
     if not (S[J] in ['A'..'Z','a'..'z','0','1'..'9','-','_','~','.']) then
       Result := Result + '%' + IntToHex(ord(S[J]),2)
     else Result := Result + S[J];
+    {$ENDIF}
+
 end;
 
 begin
@@ -480,7 +747,7 @@ begin
         if DataCount = 0 then
           Exit;
         ParamList.Add(Format('I=%s', [ApplicationID]));
-        ParamList.Add(Format('U=%s', [FUserID]));
+        ParamList.Add(Format('U=%s', [UserID]));
         ParamList.Add(Format('S=%s', [FSessionID]));
         ParamList.Add(Format('N=%d', [DataCount]));
         for I := 0 to DataCount - 1 do
@@ -492,6 +759,24 @@ begin
       AnalyticsCriticalSection.Leave;
     end;
 
+    Content := '';
+    for I := 0 to ParamList.Count - 1 do
+    begin
+      EncodedData := URLEncode(ParamList[I]);
+      Content := Content + EncodedData;
+      if I < ParamList.Count - 1 then
+      begin
+        Content := Content + '&';
+      end;
+    end;
+    {$IF DEFINED(IOS)}
+    ContentBytes := TEncoding.Convert(TEncoding.Unicode, TEncoding.ASCII,
+       TEncoding.Unicode.GetBytes(Content));
+    {$ELSE}
+    ANSIContent := AnsiString(Content);
+    {$IFEND}
+
+    {$IF DEFINED(MSWINDOWS)}
     HSession := InternetOpen('Usertility', INTERNET_OPEN_TYPE_PRECONFIG,
       nil, nil, 0);
     {$IFDEF USERTILITY_DEBUG}
@@ -514,17 +799,7 @@ begin
           ShowMessage(IntToStr(GetLastError));
         {$ENDIF}
         try
-          Content := '';
-          for I := 0 to ParamList.Count - 1 do
-          begin
-            EncodedData := URLEncode(ParamList[I]);
-            Content := Content + EncodedData;
-            if I < ParamList.Count - 1 then
-            begin
-              Content := Content + '&';
-            end;
-          end;
-          ANSIContent := Content;
+
           Header := 'Content-Type: application/x-www-form-urlencoded';
           if not HTTPSendRequest(HRequest, PChar(Header), Length(Header),
             PAnsiChar(ANSIContent), Length(ANSIContent) * Sizeof(ANSIChar)) then
@@ -544,77 +819,71 @@ begin
     finally
       InternetCloseHandle(HSession);
     end;
+    {$ELSEIF DEFINED(MACOS)}
+    URL := TNSUrl.Wrap(TNSUrl.OCClass.URLWithString(
+      StrToNSStr('http://usertility.com/d.php')));
+    URLRequest := TNSMutableURLRequest.Wrap(
+      TNSMutableURLRequest.OCClass.requestWithURL(URL));
+    URLRequest.setHTTPMethod(StrToNSStr('POST'));
+    {$IF DEFINED(IOS)}
+    PostData := TNSData.Wrap(TNSData.OCClass.dataWithBytes(
+      ContentBytes,
+      Length(ContentBytes)
+    ));
+    {$ELSE}
+    PostData := TNSData.Wrap(TNSData.OCClass.dataWithBytes(
+      PAnsiChar(ANSIContent),
+      Length(ANSIContent)
+    ));
+    {$IFEND}
+    URLRequest.setHTTPBody(PostData);
+    URLRequest.addValue(StrToNSStr('application/x-www-form-urlencoded'),
+      StrToNSStr('Content-Type'));
+    if TNSURLConnection.OCClass.sendSynchronousRequest(URLRequest, @URLResponse,
+       @Err) = nil then
+    begin
+      ErrObj := TNSError.Wrap(Pointer(Err));
+      //Not doing anything about it. Just supress the error
+    end;
+    {$IFEND}
   finally
     ParamList.Free;
   end;
 end;
 
-procedure TUsertility.SetActive(const Value: Boolean);
+procedure TUsertilityBase.SetActive(const Value: Boolean);
 var
-  Reg: TRegistry;
-  GUID: TGUID;
   AllowTracking: Boolean;
 begin
-  if Value = True then
-    if ApplicationID = '' then
-        raise EAnalyticsInitializationFailed.Create('Invalid Application ID');
-  if (not (csDesigning in ComponentState)) and (not (csLoading in ComponentState)) then
+  if Value then
   begin
-    if (Value = True) and (FActive <> Value) then
+    if ApplicationID = '' then
+      raise EAnalyticsInitializationFailed.Create('Invalid Application ID');
+    if (FActive <> Value) and
+      not (csDesigning in ComponentState) and
+      not (csLoading in ComponentState) then
     begin
-      Reg := TRegistry.Create(KEY_READ);
-      try
-        Reg.RootKey := HKEY_CURRENT_USER;
-        if not Reg.KeyExists('Software\TwoDesk\Analytics\' + ApplicationID) then
-        begin
-          Reg.Access := KEY_WRITE;
-          if not Reg.OpenKey('Software\TwoDesk\Analytics\' + ApplicationID, True) then
-            raise EAnalyticsInitializationFailed.Create('Could not store ' +
-                      'Application ID in registry');
-          CreateGUID(GUID);
-          FUserID := GuidToString(GUID);
-          Reg.WriteString('U', FUserID);
-          AllowTracking := CheckPrivacy;
-          if not AllowTracking then
-            Active := False;
-        end else
-        begin
-          Reg.OpenKey('Software\TwoDesk\Analytics\' + ApplicationID, False);
-          FUserID := Reg.ReadString('U');
-          if Reg.ValueExists('A') then
-          begin
-            AllowTracking := Reg.ReadBool('A')
-          end
-          else
-          begin
-            AllowTracking := CheckPrivacy;
-          end;
-        end;
-      finally
-        Reg.CloseKey;
-        Reg.Free;
-      end;
+      GetUserID;
+      AllowTracking := GetAllowTracking;
       if AllowTracking then
       begin
         InstallHooks;
-        if aoTrackStartup in Options then
-          TrackApplicationStarted;
         FUpdateTimer.Enabled := True;
+      end else
+      begin
+        Active := False;
       end;
-    end
-    else if (Value = False) and (FActive <> Value) then
-    begin
-      RemoveHooks;
-      FUpdateTimer.Enabled := False;
-      TrackApplicationExit;
-      //WaitForSingleObject(StartSending, INFINITE);
-      SendData;
     end;
+  end else
+  if (FActive <> Value) then
+  begin
+    RemoveHooks;
+    FUpdateTimer.Enabled := False;
   end;
   FActive := Value;
 end;
 
-procedure TUsertility.SetCacheSize(const Value: Integer);
+procedure TUsertilityBase.SetCacheSize(const Value: Integer);
 begin
   FMaxCacheSize := Value;
   if csDesigning in ComponentState then
@@ -623,38 +892,52 @@ begin
     StartSending;
 end;
 
-procedure TUsertility.SetOnPrivacyMessage(
+procedure TUsertilityBase.SetOnPrivacyMessage(
   const Value: TAnalyticsPrivacyMessageEvent);
 begin
   FOnPrivacyMessage := Value;
 end;
 
-procedure TUsertility.SetOptions(const Value: TAnalyticsOptions);
+procedure TUsertilityBase.SetOptions(const Value: TAnalyticsOptions);
 begin
   FOptions := Value;
 end;
 
-procedure TUsertility.SetPrivacyMessage(const Value: TStrings);
+procedure TUsertilityBase.SetPrivacyMessage(const Value: TStrings);
 begin
   FPrivacyMessage.Assign(Value);
 end;
 
-procedure TUsertility.SetUpdateInterval(const Value: Integer);
+procedure TUsertilityBase.SetUpdateInterval(const Value: Integer);
 begin
   FUpdateTimer.Interval := Value * 1000;
 end;
 
-function TUsertility.StartSending: THandle;
+function TUsertilityBase.StartSending: THandle;
 var
   SendThread: TAnalyticsThread;
 begin
+  if csDesigning in ComponentState then
+  begin
+    Result := 0;
+    Exit;
+  end;
   SendThread := TAnalyticsThread.Create(True);
+  {$IF DEFINED(MSWINDOWS)}
   Result := SendThread.Handle;
+  {$ELSE}
+  Result := SendThread.ThreadID;
+  {$IFEND}
   SendThread.FreeOnTerminate := True;
+  {$IF CompilerVersion >= 21}
+  SendThread.Start;
+  {$ELSE}
   SendThread.Resume;
+  {$IFEND}
+
 end;
 
-procedure TUsertility.TrackApplicationExit;
+procedure TUsertilityBase.TrackApplicationExit;
 var
   S: string;
 begin
@@ -662,19 +945,26 @@ begin
   Log(S);
 end;
 
-procedure TUsertility.TrackApplicationStarted;
+procedure TUsertilityBase.TrackApplicationStarted;
 var
   S: string;
   OSVersion: string;
+  {$IF DEFINED(MSWINDOWS)}
   VersionInfo: TOSVersionInfo;
+  {$IFEND}
   MajorVersion, MinorVersion: Cardinal;
   CPUName: string;
   BuildVersion: string;
 begin
+  {$IF DEFINED(MSWINDOWS)}
   VersionInfo.dwOSVersionInfoSize := SizeOf(VersionInfo);
   GetVersionEx(VersionInfo);
   MajorVersion := VersionInfo.dwMajorVersion;
   MinorVersion := VersionInfo.dwMinorVersion;
+  {$ELSE}
+  MajorVersion := 0;
+  MinorVersion := 0;
+  {$IFEND}
   OSVersion := Format('%d.%d' , [MajorVersion, MinorVersion]);
 
   CPUName := GetCPUName;
@@ -685,31 +975,18 @@ begin
   Log(S);
 end;
 
-procedure TUsertility.TrackControlFocused(AHandle: THandle);
-var
-  S: string;
-  TargetControl: TControl;
+procedure TUsertilityBase.TrackControlFocused(AHandle: THandle);
 begin
-  {$IFDEF VCL}
-  S := 'ControlFocus|' + GetTimestamp;
-  TargetControl := FindControl(AHandle);
-  if (TargetControl <> nil) and (TargetControl <> FFocusedControl) then
-  begin
-    S := S + '|' + TargetControl.ClassName + '|' + TargetControl.Name;
-    Log(S);
-    FFocusedControl := TargetControl;
-  end;
-  {$ENDIF}
+
 end;
 
-procedure TUsertility.TrackEvent(ACategory: string;
+procedure TUsertilityBase.TrackEvent(ACategory: string;
   AAction: string = ''; ALabel: string = ''; AValue: Double = 0.0);
 var
   S: string;
 begin
   if not Active then
     Exit;
-  //  raise EAnalyticsInactive.Create('Actions not allowed if analytics are inactive');
   S := ACategory;
   if AAction <> '' then
   begin
@@ -717,16 +994,13 @@ begin
     if ALabel <> '' then
     begin
       S := S + '|' + ALabel;
-      //if not IsNan(AValue) then
-      //begin
-        S := S + '|' + FloatToStr(AValue);
-      //end;
+      S := S + '|' + FloatToStr(AValue);
     end;
   end;
   Log('TrackEvent|' + GetTimestamp + '|' + S);
 end;
 
-procedure TUsertility.TrackException(Sender: TObject; E: Exception);
+procedure TUsertilityBase.TrackException(Sender: TObject; E: Exception);
 begin
   Log('AppCrash|' + GetTimestamp + '|' + E.ClassName + '|' + E.Message);
   if Assigned(FOldExceptionHandler) then
@@ -735,32 +1009,16 @@ begin
     Application.ShowException(E);
 end;
 
-procedure TUsertility.TrackWindowActivated(AHandle: THandle);
-var
-  S: string;
-  {$IF DEFINED(VCL)}
-  TargetControl: TControl;
-  {$ELSEIF DEFINED(FMX)}
-  TargetControl: TFmxObject;
-  {$IFEND}
+procedure TUsertilityBase.TrackWindowActivated(AHandle: THandle);
 begin
-  S := 'FormActivate|' + GetTimestamp;
-  {$IF DEFINED(VCL)}
-  TargetControl := FindControl(AHandle);
-  {$ELSEIF DEFINED(FMX)}
-  TargetControl := Fmx.Platform.Win.FindWindow(AHandle);
-  {$IFEND}
-  if (TargetControl <> nil) and (TargetControl <> FActiveForm) then
-  begin
-    S := S + '|' + TargetControl.ClassName + '|' + TargetControl.Name;
-    Log(S);
-    FActiveForm := TForm(TargetControl);
-  end;
+  //Stub. This depends on the framework.
 end;
 
-procedure TUsertility.UpdateTimerFire(Sender: TObject);
+procedure TUsertilityBase.UpdateTimerFire(Sender: TObject);
 begin
-  StartSending;
+  //FUpdateTimer.Enabled := False;
+  if not (csDesigning in ComponentState) then
+    StartSending;
 end;
 
 { TAnalyticsThread }

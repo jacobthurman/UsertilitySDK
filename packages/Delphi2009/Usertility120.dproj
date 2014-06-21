@@ -58,7 +58,7 @@
 						<Parameters Name="LoadUnspecifiedSymbols">False</Parameters>
 					</Parameters>
 					<Language>
-						<Language Name="RootDir">packages\Delphi2009\</Language>
+						<Language Name="RootDir">Q:\Analytics\packages\Delphi2009\</Language>
 					</Language>
 					<VersionInfo>
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>
@@ -102,6 +102,7 @@
 			<DCCReference Include="rtl.dcp"/>
 			<DCCReference Include="vcl.dcp"/>
 			<DCCReference Include="..\..\source\Usertility.pas"/>
+			<DCCReference Include="..\..\source\UsertilityVCL.pas"/>
 			<DCCReference Include="..\..\Usertility.dcr"/>
 			<BuildConfiguration Include="Base">
 				<Key>Base</Key>

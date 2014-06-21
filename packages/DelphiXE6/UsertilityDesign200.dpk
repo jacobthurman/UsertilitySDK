@@ -5,7 +5,7 @@ package UsertilityDesign200;
 {$ALIGN 8}
 {$ASSERTIONS ON}
 {$BOOLEVAL OFF}
-{$DEBUGINFO ON}
+{$DEBUGINFO OFF}
 {$EXTENDEDSYNTAX ON}
 {$IMPORTEDDATA ON}
 {$IOCHECKS ON}
@@ -26,12 +26,13 @@ package UsertilityDesign200;
 {$ENDIF IMPLICITBUILDING}
 {$DESCRIPTION 'Usertility Design Time Package'}
 {$DESIGNONLY}
-{$IMPLICITBUILD OFF}
+{$IMPLICITBUILD ON}
 
 requires
   rtl,
   vcl,
-  Usertility200;
+  Usertility200,
+  UsertilityFMX200;
 
 contains
   UsertilityInstall in '..\..\source\UsertilityInstall.pas';

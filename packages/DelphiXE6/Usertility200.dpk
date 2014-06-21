@@ -6,7 +6,7 @@ package Usertility200;
 {$ALIGN 8}
 {$ASSERTIONS ON}
 {$BOOLEVAL OFF}
-{$DEBUGINFO ON}
+{$DEBUGINFO OFF}
 {$EXTENDEDSYNTAX ON}
 {$IMPORTEDDATA ON}
 {$IOCHECKS ON}
@@ -29,9 +29,11 @@ package Usertility200;
 
 requires
   rtl,
-  vcl;
+  vcl,
+  fmx;
 
 contains
-  Usertility in '..\..\source\Usertility.pas';
+  Usertility in '..\..\source\Usertility.pas',
+  UsertilityVCL in '..\..\source\UsertilityVCL.pas';
 
 end.

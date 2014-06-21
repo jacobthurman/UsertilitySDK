@@ -6,6 +6,9 @@
         <Projects Include="Usertility200.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="UsertilityFMX200.dproj">
+            <Dependencies/>
+        </Projects>
         <Projects Include="UsertilityDesign200.dproj">
             <Dependencies/>
         </Projects>
@@ -26,6 +29,15 @@
     <Target Name="Usertility200:Make">
         <MSBuild Projects="Usertility200.dproj" Targets="Make"/>
     </Target>
+    <Target Name="UsertilityFMX200">
+        <MSBuild Projects="UsertilityFMX200.dproj"/>
+    </Target>
+    <Target Name="UsertilityFMX200:Clean">
+        <MSBuild Projects="UsertilityFMX200.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="UsertilityFMX200:Make">
+        <MSBuild Projects="UsertilityFMX200.dproj" Targets="Make"/>
+    </Target>
     <Target Name="UsertilityDesign200">
         <MSBuild Projects="UsertilityDesign200.dproj"/>
     </Target>
@@ -36,13 +48,13 @@
         <MSBuild Projects="UsertilityDesign200.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
-        <CallTarget Targets="Usertility200;UsertilityDesign200"/>
+        <CallTarget Targets="Usertility200;UsertilityFMX200;UsertilityDesign200"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="Usertility200:Clean;UsertilityDesign200:Clean"/>
+        <CallTarget Targets="Usertility200:Clean;UsertilityFMX200:Clean;UsertilityDesign200:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="Usertility200:Make;UsertilityDesign200:Make"/>
+        <CallTarget Targets="Usertility200:Make;UsertilityFMX200:Make;UsertilityDesign200:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

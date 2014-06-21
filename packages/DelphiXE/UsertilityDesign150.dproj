@@ -62,7 +62,7 @@
 				<Delphi.Personality>
 					<Parameters/>
 					<Language>
-						<Language Name="RootDir">..\DelphiXE\</Language>
+						<Language Name="RootDir">Q:\Analytics\packages\DelphiXE\</Language>
 					</Language>
 					<VersionInfo>
 						<VersionInfo Name="IncludeVerInfo">True</VersionInfo>

@@ -30,6 +30,7 @@ requires
   vcl;
 
 contains
-  Usertility in '..\..\source\Usertility.pas';
+  Usertility in '..\..\source\Usertility.pas',
+  UsertilityVCL in '..\..\source\UsertilityVCL.pas';
 
 end.

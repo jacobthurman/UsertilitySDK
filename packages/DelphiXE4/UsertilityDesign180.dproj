@@ -87,9 +87,6 @@
         <BorlandProject>
             <Delphi.Personality>
                 <Parameters/>
-                <Language>
-                    <Language Name="RootDir">Q:\Analytics\packages\DelphiXE4\</Language>
-                </Language>
                 <VersionInfo>
                     <VersionInfo Name="IncludeVerInfo">True</VersionInfo>
                     <VersionInfo Name="AutoIncBuild">False</VersionInfo>
